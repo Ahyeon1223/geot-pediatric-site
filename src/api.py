@@ -5,6 +5,7 @@ clean.py가 만든 시군구별 표를 읽어서, 화면(app.py)이 쓸 수 있�
 서버는 공공 API를 직접 부르지 않으므로 인증키(.env)가 없어도 실행됩니다.
 
 실행 (프로젝트 맨 위 폴더에서):
+    cd geot-pediatric-site
     uvicorn src.api:app --reload
 확인:
     http://127.0.0.1:8000/docs
@@ -37,6 +38,10 @@ REQUIRED_COLUMNS = [
     "child_pop",     # 0~14세 인구
     "clinic_count",  # 소아청소년과 의원 수
 ]
+
+# 소아 인구가 이보다 적은 시군구는 기본으로 목록에서 뺍니다.
+# (인구가 너무 적으면 의원 1곳만 있어도 비율이 크게 튀기 때문. 11/20 피드백 반영)
+MIN_CHILD_POP_DEFAULT = 1000
 
 # 테스트할 때는 환경변수로 다른 파일을 가리킬 수 있습니다.
 ENV_DATA_PATH = "GEOT_DATA_PATH"
@@ -133,7 +138,9 @@ def list_sido():
 @app.get("/regions")
 def list_regions(
     sido: str | None = Query(None, description="시도 이름. 비우면 전국"),
-    min_child_pop: int = Query(0, ge=0, description="소아 인구가 이 값 이상인 곳만"),
+    min_child_pop: int = Query(
+        MIN_CHILD_POP_DEFAULT, ge=0, description="소아 인구가 이 값 이상인 곳만 (기본 1,000명)"
+    ),
     sort: Literal["asc", "desc"] = Query(
         "asc", description="asc: 소아과가 부족한 곳부터, desc: 많은 곳부터"
     ),
@@ -158,6 +165,22 @@ def list_regions(
         "count": len(df),
         "data_file": path.name,
         "items": to_records(df),
+    }
+
+
+@app.get("/summary")
+def summary():
+    """건수 검증표(reports/count_check.md)와 숫자를 맞춰 보기 위한 요약"""
+    df, path = get_data()
+    small = df["child_pop"].fillna(0) < MIN_CHILD_POP_DEFAULT
+    return {
+        "data_file": path.name,
+        "sigungu_count": len(df),
+        "clinic_total": int(df["clinic_count"].fillna(0).sum()),
+        "child_pop_total": int(df["child_pop"].fillna(0).sum()),
+        "excluded_small_pop": int(small.sum()),
+        "excluded_small_pop_names": (df.loc[small, "sido"] + " " + df.loc[small, "sigungu"]).tolist(),
+        "shown_by_default": int((~small).sum()),
     }
 
 
