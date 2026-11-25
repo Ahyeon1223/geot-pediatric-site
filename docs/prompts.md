@@ -11,3 +11,4 @@ agent에게 어떻게 요청했고, 결과를 보고 무엇을 고쳤는지 그�
 
 | 11/19 | 서버 | Claude에게 src/api.py, tests/test_api.py 작성 요청 | 엔드포인트 4개, 테스트 13개 | 파일 위치(data/src → src) 수정, 서버 실행·/health 200 확인, pytest 13 passed |
 
+| 11/25 | 총괄(김아현) | Claude에게 계획서 한계 대응방안 4개 구현 요청 | clean.py 보조 열, indicators.py·build_adjacency.py, /meta, 테스트 9개 추가 | 기존 6개 열이 서울 샘플과 같은지, 의원 2,117곳·종로구 4.51 유지 확인. 화성·인천 새 구는 옛 경계로 근사 |
