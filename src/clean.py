@@ -47,7 +47,18 @@ REGION_HEADERS = {
     "population_0_14": "child_pop",
     "clinic_count": "clinic_count",
     "recent_3yr_openings": "recent_3yr_openings",
+    # 아래 열은 한계 대응방안용 보조 열이다. 위 6개 열의 값은 바뀌지 않는다.
+    "clinic_count_broad": "clinic_count_broad",
+    "doctor_count": "doctor_count",
+    "population_month": "population_month",
+    "hira_collected": "hira_collected",
 }
+
+# 대응방안 ①: 기관명에 '소아'가 없는 소아 진료 의원(○○어린이의원 등).
+# 기본 순위의 clinic_count는 지금처럼 '소아'만 센다(검증표 2,117곳 유지).
+# 아래 키워드까지 넣은 수는 참고용 clinic_count_broad 열과
+# reports/name_keyword_check.csv(누락 의심 의원 목록)에만 남긴다.
+EXTRA_NAME_KEYWORDS = ("어린이", "아동", "키즈")
 
 
 def read_kosis_rows(stream, month):
@@ -212,6 +223,7 @@ def save_results(output_dir, regions, clinics):
         "XPos": "longitude",
         "YPos": "latitude",
         "estbDd": "opened_date",
+        "drTotCnt": "doctor_count",
     }
     clinic_output = clinics[list(clinic_headers)].rename(columns=clinic_headers)
 
@@ -237,9 +249,16 @@ def save_results(output_dir, regions, clinics):
             raise
 
 
+def collected_date(path):
+    """수집 날짜를 따로 주지 않으면 심평원 원본 파일을 마지막으로 저장한 날을 쓴다."""
+    return pd.Timestamp(path.stat().st_mtime, unit="s", tz="Asia/Seoul").strftime("%Y%m%d")
+
+
 def prepare_results(args):
     if not re.fullmatch(r"[0-9]{4}(?:0[1-9]|1[0-2])", args.month):
         raise ValueError("인구 기준월은 YYYYMM 형식으로 입력하세요. 예: 202610")
+    if args.collected and not re.fullmatch(r"[0-9]{8}", args.collected):
+        raise ValueError("수집일은 YYYYMMDD 형식으로 입력하세요. 예: 20261122")
     kosis_path = args.kosis
     if kosis_path is None:
         kosis_path = KOSIS_BASE.with_suffix(".csv")
@@ -266,6 +285,7 @@ def prepare_results(args):
             f"중복 기관 ID {duplicate_ids:,}건, 빈 기관명 {blank_names:,}건"
         )
         raise ValueError(message)
+    has_doctor_count = "drTotCnt" in hira
     for column in (*OPTIONAL_CLINIC_COLUMNS, "estbDd"):
         if column not in hira:
             hira[column] = ""
@@ -310,6 +330,7 @@ def prepare_results(args):
     conflict_count = len(conflicts[["sidoCd", "sgguCd"]].drop_duplicates())
     summary = population.drop(columns="sido_prefix").copy()
     summary["population_month"] = args.month
+    summary["hira_collected"] = args.collected or collected_date(args.hira)
     summary["clinic_count"] = summary["region_code"].map(counts).fillna(0).astype(int)
     # 인구 기준월을 포함한 36개월 동안 개설한 의원을 센다.
     month = pd.Period(args.month, freq="M")
@@ -320,6 +341,39 @@ def prepare_results(args):
     in_period = opened.ge((month - 35).start_time) & opened.lt((month + 1).start_time)
     recent_counts = clinics.loc[in_period, "region_code"].value_counts()
     summary["recent_3yr_openings"] = summary["region_code"].map(recent_counts).fillna(0).astype(int)
+
+    # 대응방안 ④: 의원 1곳 = 1 대신 의사 수(drTotCnt)로도 볼 수 있게 지역별 합계를 남긴다.
+    doctors = pd.to_numeric(clinics["drTotCnt"].str.strip(), errors="coerce")
+    clinics["drTotCnt"] = doctors.astype("Int64")
+    if has_doctor_count:
+        doctor_sums = doctors.groupby(clinics["region_code"]).sum(min_count=1)
+        summary["doctor_count"] = summary["region_code"].map(doctor_sums).fillna(0).astype(int)
+    else:
+        summary["doctor_count"] = pd.NA
+
+    # 대응방안 ①: 추가 키워드로 잡히는 의원 수(참고용).
+    extra = hira.loc[~name_matches & hira["yadmNm"].str.contains("|".join(EXTRA_NAME_KEYWORDS))]
+    extra = extra.merge(mapping, on=MAPPING_KEYS, how="left", validate="many_to_one")
+    extra_counts = extra["region_code"].value_counts()
+    summary["clinic_count_broad"] = (
+        summary["clinic_count"] + summary["region_code"].map(extra_counts).fillna(0).astype(int)
+    )
+    keyword_report = pd.DataFrame({
+        "KOSIS 지역코드": extra["region_code"],
+        "KOSIS 지역명": extra["region_code"].map(dict(zip(population["region_code"], region_names))),
+        "기관명": extra["yadmNm"],
+        "잡힌 키워드": extra["yadmNm"].map(
+            lambda name: ", ".join(word for word in EXTRA_NAME_KEYWORDS if word in name)
+        ),
+        "주소": extra["addr"],
+        "전체 의사 수": extra["drTotCnt"],
+        "개설일": extra["estbDd"],
+        "확인 결과": "",
+    }).sort_values(["KOSIS 지역코드", "기관명"])
+    with TemporaryDirectory(dir=args.report_dir) as directory:
+        pending = Path(directory) / "name_keyword_check.csv"
+        keyword_report.to_csv(pending, index=False, encoding="utf-8-sig")
+        pending.replace(args.report_dir / "name_keyword_check.csv")
     if len(summary) != summary["region_code"].nunique():
         raise ValueError("최종 집계에 시군구 코드가 중복됩니다.")
     if summary["clinic_count"].sum() != len(clinics) - len(unmatched):
@@ -348,6 +402,9 @@ def clean(args):
             f"결과 CSV를 교체할 수 없습니다. Excel 등에서 열린 결과 파일을 닫고 다시 실행하세요. ({exc})"
         ) from exc
     print(f"완료: {len(regional_output):,}개 지역, {len(clinics):,}개 의원. 결과: {args.output_dir}")
+    extra = int(regional_output["clinic_count_broad"].sum() - regional_output["clinic_count"].sum())
+    print(f"참고: '{'·'.join(EXTRA_NAME_KEYWORDS)}' 키워드로 더 잡히는 의원 {extra:,}곳 "
+          f"(기본 순위에는 넣지 않음, 목록: {args.report_dir / 'name_keyword_check.csv'})")
 
 
 if __name__ == "__main__":
@@ -355,6 +412,7 @@ if __name__ == "__main__":
     parser.add_argument("--hira", type=Path, default=ROOT / "data/raw/hira_pediatric_candidates.csv")
     parser.add_argument("--kosis", type=Path, help="KOSIS 원본 CSV 또는 ZIP 경로")
     parser.add_argument("--month", default="202610")
+    parser.add_argument("--collected", help="심평원 수집일 YYYYMMDD (비우면 원본 파일 저장일)")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "data/processed")
     parser.add_argument("--report-dir", type=Path, default=ROOT / "reports")
     try:
