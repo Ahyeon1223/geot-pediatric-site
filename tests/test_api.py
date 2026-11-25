@@ -38,7 +38,7 @@ def test_health(client):
 
 
 def test_regions_sorted_shortage_first(client):
-    r = client.get("/regions")
+    r = client.get("/regions", params={"min_child_pop": 0})
     assert r.status_code == 200
     items = r.json()["items"]
     assert [i["code"] for i in items] == ["11140", "11110", "26110"]
@@ -53,9 +53,25 @@ def test_zero_child_pop_is_null(client):
 
 
 def test_regions_desc(client):
-    items = client.get("/regions", params={"sort": "desc"}).json()["items"]
+    items = client.get("/regions", params={"sort": "desc", "min_child_pop": 0}).json()["items"]
     assert items[0]["code"] == "11110"
     assert items[-1]["code"] == "26110"  # 계산 불가는 내림차순에서도 맨 뒤
+
+
+def test_default_excludes_small_child_pop(client):
+    # 기본값 1,000명: 소아 인구 0인 부산 중구는 빠짐
+    codes = [i["code"] for i in client.get("/regions").json()["items"]]
+    assert codes == ["11140", "11110"]
+
+
+def test_summary_matches_hand_count(client):
+    # 손계산: 3개 시군구, 의원 5+1+2=8, 소아 10000+8000+0=18000
+    s = client.get("/summary").json()
+    assert s["sigungu_count"] == 3
+    assert s["clinic_total"] == 8
+    assert s["child_pop_total"] == 18000
+    assert s["excluded_small_pop"] == 1
+    assert s["shown_by_default"] == 2
 
 
 def test_filter_by_sido(client):
