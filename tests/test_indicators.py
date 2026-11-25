@@ -99,3 +99,10 @@ def test_summary_extra_totals(client):
     assert s["clinic_total_broad"] == 9
     assert s["doctor_total"] == 10
     assert s["no_boundary_names"] == []
+
+
+def test_region_detail_lists_clinics(client):
+    clinics = client.get("/regions/11110").json()["clinics"]
+    assert len(clinics) == 4
+    assert clinics[0]["clinic_name"] == "다소아과의원"  # 개설일 최근 순
+    assert clinics[0]["doctor_count"] == 2
