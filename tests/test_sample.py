@@ -17,4 +17,8 @@ def test_sample_matches_count_check(monkeypatch):
     assert (items[0]["sigungu"], items[0]["clinics_per_10k"]) == ("서대문구", 4.01)
     assert client.get("/regions/11110").json()["clinics_per_10k"] == 4.51
     assert client.get("/meta").json()["population_month"] == "202610"
-    assert len(client.get("/regions/11410").json()["clinics"]) == 10
+    detail = client.get("/regions/11410").json()
+    assert len(detail["clinics"]) == 10
+    # 의사 수(drTotCnt): 서대문구 의원 10곳의 의사 11명 → 11 / 24,934 × 10,000 = 4.41
+    assert sum(c["doctor_count"] for c in detail["clinics"]) == detail["doctor_count"] == 11
+    assert detail["doctors_per_10k"] == 4.41
