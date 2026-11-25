@@ -22,7 +22,8 @@ from zipfile import ZipFile
 import pandas as pd
 
 from clean import (
-    AGES, KOSIS_BASE, KOSIS_COLUMNS, MAPPING_KEYS, ROOT, load_population, region_mapping,
+    AGES, KOSIS_BASE, KOSIS_COLUMNS, MAPPING_KEYS, NAME_FALSE_MATCHES, ROOT, load_population,
+    region_mapping,
 )
 
 # '소아'가 이름에 없지만 소아 진료일 수 있는 이름 (피드백 2번: 몇 곳이 빠지는지 기록)
@@ -128,7 +129,9 @@ def build(args):
     base = hira[ids.ne("") & ~ids.duplicated() & hira["yadmNm"].str.strip().ne("")]
     has_child = base["yadmNm"].str.contains("소아", regex=False)
     no_child = int((~has_child).sum())
-    clinics = base[has_child]
+    false_match = has_child & base["yadmNm"].str.strip().isin(NAME_FALSE_MATCHES)
+    n_false = int(false_match.sum())
+    clinics = base[has_child & ~false_match]
     kept = len(clinics)
 
     dropped = base[~has_child].copy()
@@ -191,10 +194,12 @@ def build(args):
     w(f"| − 기관 ID 중복 | {fmt(dup_id)} |")
     w(f"| − 기관명 빈값 | {fmt(blank_name)} |")
     w(f"| − 기관명에 '소아' 없음 | {fmt(no_child)} |")
+    w(f"| − '소아'가 낱말 경계에 우연히 생긴 이름 (예: 연구소아주의원) | {fmt(n_false)} |")
     w(f"| **= 정리 후 의원** | **{fmt(kept)}** |")
     w("")
-    w(f"검산: {fmt(raw)} − {fmt(blank_id)} − {fmt(dup_id)} − {fmt(blank_name)} − {fmt(no_child)} = "
-      f"{fmt(raw - blank_id - dup_id - blank_name - no_child)} → {check(raw - blank_id - dup_id - blank_name - no_child == kept)}")
+    rest = raw - blank_id - dup_id - blank_name - no_child - n_false
+    w(f"검산: {fmt(raw)} − {fmt(blank_id)} − {fmt(dup_id)} − {fmt(blank_name)} − {fmt(no_child)} − {fmt(n_false)} = "
+      f"{fmt(rest)} → {check(rest == kept)}")
     w("")
     w("0건 확인 방법: 빈 ID는 `ykiho`를 공백 제거 후 빈 문자열인지, 중복은 `ykiho` 값이 두 번 이상 나오는지 "
       "전체 행에서 셌다. `collect.py`도 저장 전에 같은 검사를 하고, 시도별 받은 건수가 API `totalCount`와 같은지 확인한다.")

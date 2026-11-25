@@ -26,10 +26,10 @@ python src/clean.py
 | 생성 파일 | 내용 및 용도 |
 |---|---|
 | `data/processed/regions.csv` | **지역별 요약표, 256개 지역.** 기존 `api.py`가 읽는 `code`, `sido`, `sigungu`, `child_pop`, `clinic_count`와 최근 3년 개설 건수인 `recent_3yr_openings`까지 총 6개 열임. |
-| `data/processed/clinics.csv` | **의원별 상세 목록, 2,117곳.** `region_code`, `clinic_name`, `address`, `longitude`, `latitude`, `opened_date`를 제공함. 현재 `api.py`는 지역 요약을 반환하며, 요건정의서에 있는 "지역 선택 시 의원 목록과 지도 위치를 보여주는 상세 기능"에 이 파일을 사용할 수 있음. |
+| `data/processed/clinics.csv` | **의원별 상세 목록, 2,116곳.** `region_code`, `clinic_name`, `address`, `longitude`, `latitude`, `opened_date`를 제공함. 현재 `api.py`는 지역 요약을 반환하며, 요건정의서에 있는 "지역 선택 시 의원 목록과 지도 위치를 보여주는 상세 기능"에 이 파일을 사용할 수 있음. |
 | `reports/region_mapping.csv` | **시군구 매핑표, 총 256개 지역.** 심평원 수집본과 KOSIS 인구표의 지역을 대조한 결과임. **256개 = 매칭 성공 254개 + 매칭 실패 2개.** 경상북도 영양군·울릉군은 ‘KOSIS에만 있음’으로 표시되며, 심평원 수집본에만 있는 지역은 0개임. |
 
-regions.csv의 `recent_3yr_openings`는 최종 집계 대상 의원 2,117곳 중 **2023년 11월 1일~2026년 10월 31일**에 개설한 곳을 지역별로 센 값임. 전국 합계는 **137곳**임.
+regions.csv의 `recent_3yr_openings`는 최종 집계 대상 의원 2,116곳 중 **2023년 11월 1일~2026년 10월 31일**에 개설한 곳을 지역별로 센 값임. 전국 합계는 **137곳**임.
 
 ## 4. 서버 연동
 
