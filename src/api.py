@@ -235,6 +235,17 @@ def meta():
     }
 
 
+CLINIC_FIELDS = ["clinic_name", "address", "opened_date", "doctor_count", "latitude", "longitude"]
+
+
+def clinic_records(clinics: pd.DataFrame | None, code: str):
+    """상세 화면의 의원 목록·지도용 (clinics.csv가 없으면 None, 개설일 최근 순)"""
+    if clinics is None:
+        return None
+    rows = clinics[clinics["region_code"] == code].sort_values("opened_date", ascending=False)
+    return to_records(rows[[c for c in CLINIC_FIELDS if c in rows]])
+
+
 @app.get("/regions/{code}")
 def get_region(code: str):
     """시군구 코드 하나의 상세"""
@@ -251,6 +262,7 @@ def get_region(code: str):
 
     # 대응방안 ③: 연도별 개설 수 (clinics.csv가 있을 때)
     clinics = load_clinics(path)
+    detail["clinics"] = clinic_records(clinics, code)
     month = first_value(df, "population_month")
     if clinics is None or month is None:
         detail["openings_by_year"] = None
