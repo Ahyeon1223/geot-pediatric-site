@@ -55,10 +55,14 @@ REGION_HEADERS = {
 }
 
 # 대응방안 ①: 기관명에 '소아'가 없는 소아 진료 의원(○○어린이의원 등).
-# 기본 순위의 clinic_count는 지금처럼 '소아'만 센다(검증표 2,117곳 유지).
+# 기본 순위의 clinic_count는 지금처럼 '소아'만 센다(검증표 기준, 오탐 1곳 제외 후 2,116곳).
 # 아래 키워드까지 넣은 수는 참고용 clinic_count_broad 열과
 # reports/name_keyword_check.csv(누락 의심 의원 목록)에만 남긴다.
 EXTRA_NAME_KEYWORDS = ("어린이", "아동", "키즈")
+
+# 이름에 '소아'가 들어가지만 소아청소년과가 아닌 의원 (팀 확인 후 제외, 11/25).
+# '연구소아주의원'처럼 앞뒤 낱말이 붙어서 '소아'가 생긴 경우다.
+NAME_FALSE_MATCHES = ("재)아주산업의학연구소아주의원",)
 
 
 def read_kosis_rows(stream, month):
@@ -314,7 +318,9 @@ def prepare_results(args):
             pending, index=False, encoding="utf-8-sig",
         )
         pending.replace(mapping_path)
-    name_matches = hira["yadmNm"].str.contains("소아", regex=False)
+    name_matches = hira["yadmNm"].str.contains("소아", regex=False) & ~hira["yadmNm"].str.strip().isin(
+        NAME_FALSE_MATCHES
+    )
     clinics = hira.loc[name_matches].merge(
         mapping, on=MAPPING_KEYS, how="left", validate="many_to_one",
     )
