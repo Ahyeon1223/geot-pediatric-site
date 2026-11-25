@@ -17,6 +17,8 @@ from typing import Literal
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 
+from src import indicators
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # ---------------------------------------------------------------------------
@@ -45,6 +47,7 @@ MIN_CHILD_POP_DEFAULT = 1000
 
 # 테스트할 때는 환경변수로 다른 파일을 가리킬 수 있습니다.
 ENV_DATA_PATH = "GEOT_DATA_PATH"
+ENV_ADJACENCY_PATH = "GEOT_ADJACENCY_PATH"  # 인접 시군구 표 (대응방안 ②)
 
 # ---------------------------------------------------------------------------
 # 데이터 읽기와 계산 (서버 없이도 테스트할 수 있게 함수로 분리)
@@ -95,12 +98,29 @@ def load_regions(path: Path) -> pd.DataFrame:
     df.loc[valid, "clinics_per_10k"] = (
         df.loc[valid, "clinic_count"] / df.loc[valid, "child_pop"] * 10000
     ).round(2)
-    return df
+
+    # 계획서 한계 대응방안의 보조 지표 (기본 지표·순위는 그대로, 열만 추가)
+    adjacency = indicators.load_adjacency(os.getenv(ENV_ADJACENCY_PATH) or indicators.ADJACENCY_PATH)
+    return indicators.add_secondary_indicators(df, adjacency)
+
+
+def load_clinics(region_path: Path) -> pd.DataFrame | None:
+    """regions.csv 옆의 clinics.csv (없으면 None)"""
+    path = region_path.with_name("clinics.csv")
+    if not path.exists():
+        return None
+    return pd.read_csv(path, dtype={"region_code": str, "opened_date": str}, encoding="utf-8-sig")
+
+
+def first_value(df: pd.DataFrame, column: str):
+    if column not in df or df[column].dropna().empty:
+        return None
+    return str(df[column].dropna().iloc[0]).removesuffix(".0")
 
 
 def to_records(df: pd.DataFrame) -> list[dict]:
     """표를 JSON으로 보낼 수 있는 목록으로 바꿉니다. 빈 값(NaN)은 None으로."""
-    clean = df.astype(object).where(pd.notna(df), None)
+    clean = df.astype(object).where(df.map(lambda value: isinstance(value, list) or pd.notna(value)), None)
     return clean.to_dict(orient="records")
 
 
@@ -181,14 +201,61 @@ def summary():
         "excluded_small_pop": int(small.sum()),
         "excluded_small_pop_names": (df.loc[small, "sido"] + " " + df.loc[small, "sigungu"]).tolist(),
         "shown_by_default": int((~small).sum()),
+        # 보조 지표 확인용 (원본에 열이 없으면 None)
+        "clinic_total_broad": total(df, "clinic_count_broad"),
+        "doctor_total": total(df, "doctor_count"),
+        "no_boundary_names": (
+            df.loc[df["neighbor_codes"].isna(), "sido"] + " " + df.loc[df["neighbor_codes"].isna(), "sigungu"]
+        ).tolist(),
+    }
+
+
+def total(df: pd.DataFrame, column: str):
+    if column not in df or df[column].isna().all():
+        return None
+    return int(pd.to_numeric(df[column], errors="coerce").fillna(0).sum())
+
+
+@app.get("/meta")
+def meta():
+    """데이터 기준일 (화면 상단에 표시, 대응방안 ③)"""
+    df, path = get_data()
+    return {
+        "data_file": path.name,
+        "population_month": first_value(df, "population_month"),  # 예: 202610
+        "hira_collected": first_value(df, "hira_collected"),  # 예: 20261122
+        "refresh": "python src/collect.py → python src/clean.py 를 다시 실행하면 갱신됩니다.",
+        "notes": {
+            "clinics_per_10k": "기본 지표. 기관명에 '소아'가 들어간 소아청소년과 의원만 셉니다.",
+            "clinics_per_10k_broad": "참고. 이름에 어린이·아동·키즈가 들어간 의원까지 셉니다.",
+            "clinics_per_10k_with_neighbors": "보조 지표. 맞닿은 시군구의 의원과 소아 인구까지 합쳐 계산합니다.",
+            "doctors_per_10k": "보조 지표. 의원 수 대신 의사 수(drTotCnt)로 계산합니다. 야간 진료는 범위 밖입니다.",
+            "openings_by_year": "지금 영업 중인 의원의 개설 연도입니다. 폐업한 의원은 원본에 없어 빠집니다.",
+        },
     }
 
 
 @app.get("/regions/{code}")
 def get_region(code: str):
     """시군구 코드 하나의 상세"""
-    df, _ = get_data()
+    df, path = get_data()
     row = df[df["code"] == code]
     if row.empty:
         raise HTTPException(404, f"시군구 코드 '{code}'를 찾을 수 없습니다.")
-    return to_records(row)[0]
+    detail = to_records(row)[0]
+
+    # 대응방안 ②: 맞닿은 시군구 이름과 각자의 기본 지표
+    codes = detail.get("neighbor_codes") or []
+    near = df[df["code"].isin(codes)]
+    detail["neighbors"] = to_records(near[["code", "sido", "sigungu", "child_pop", "clinic_count", "clinics_per_10k"]])
+
+    # 대응방안 ③: 연도별 개설 수 (clinics.csv가 있을 때)
+    clinics = load_clinics(path)
+    month = first_value(df, "population_month")
+    if clinics is None or month is None:
+        detail["openings_by_year"] = None
+    else:
+        detail["openings_by_year"] = indicators.openings_by_year(
+            clinics[clinics["region_code"] == code], last_year=int(month[:4])
+        )
+    return detail
